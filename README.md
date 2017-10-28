@@ -14,3 +14,5 @@ cp fritzcap.sh <extcap folder>
 ```
 
 Restart Wireshark and you should be ready to go.
+
+![example](https://user-images.githubusercontent.com/7548711/32137745-ff4f6954-bc25-11e7-976e-08751a026160.png)
