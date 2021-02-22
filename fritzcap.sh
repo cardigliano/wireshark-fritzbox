@@ -40,7 +40,7 @@ while [ "$1" != "" ]; do
 			FRITZ_IP=$2
             shift
             ;;
-        --user)
+        --username)
 			FRITZ_USER=$2
             shift
             ;;
