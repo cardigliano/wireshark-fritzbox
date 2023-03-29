@@ -5,40 +5,32 @@ if [  $# -lt 1 ]; then
   exit 1
 fi 
 
-WGET=/usr/local/bin/wget
+WGET=/usr/bin/wget
 FRITZ_IP=$1
-FRITZ_USER=""
-FRITZ_IFACE="1-lan"
+FRITZ_IFACE="2-1"
 
-SIDFILE="/tmp/fritz.sid"
+function get_session_id() {
+    local SID
+    CHALLENGE=$($WGET -O - "http://$FRITZ_IP/login_sid.lua" 2>/dev/null \
+        | sed 's/.*<Challenge>\(.*\)<\/Challenge>.*/\1/')
+    CPSTR="$CHALLENGE-$FRITZ_PWD"
+    MD5=$(echo -n $CPSTR | iconv -f ISO8859-1 -t UTF-16LE \
+        | md5sum -b | awk '{print substr($0,1,32)}')
+    RESPONSE="$CHALLENGE-$MD5"
+    SID=$($WGET -O - "http://$FRITZ_IP/login_sid.lua?username=$FRITZ_USER&response=$RESPONSE" 2>/dev/null \
+        | sed 's/.*<SID>\(.*\)<\/SID>.*/\1/')
 
-if [ ! -f $SIDFILE ]; then
-  touch $SIDFILE
-fi
+    echo "$SID"
+}
 
-SID=$(cat $SIDFILE)
+echo -n "Enter your router username: "; read FRITZ_USER;
+echo -n "Enter your router password: "; read -s FRITZ_PWD;
+echo
 
-NOTCONNECTED=$(curl -s "http://$FRITZ_IP/login_sid.lua?sid=$SID" | grep -c "0000000000000000")
-if [ $NOTCONNECTED -gt 0 ]; then
-
-  read -s -p "Enter Router Password: " FRITZ_PWD
-  echo ""
-
-  CHALLENGE=$(curl -s http://$FRITZ_IP/login_sid.lua |  grep -o "<Challenge>[a-z0-9]\{8\}" | cut -d'>' -f 2)
-  HASH=$(perl -MPOSIX -e '
-    use Digest::MD5 "md5_hex";
-    my $ch_pw = "$ARGV[0]-$ARGV[1]";
-    $ch_pw =~ s/(.)/$1 . chr(0)/eg; 
-    my $md5 = lc(md5_hex($ch_pw)); 
-    print $md5;
-  ' -- "$CHALLENGE" "$FRITZ_PWD")
-  curl -s "http://$FRITZ_IP/login_sid.lua" -d "response=$CHALLENGE-$HASH" -d 'username='${FRITZ_USER} | grep -o "<SID>[a-z0-9]\{16\}" | cut -d'>' -f 2 > $SIDFILE
-fi
-
-SID=$(cat $SIDFILE)
+SID=$(get_session_id)
 
 if [ "$SID" == "0000000000000000" ]; then
-  echo "Authentication error" 1>&2
+  echo "Authentication failure!" 1>&2
   exit 1
 fi
 
