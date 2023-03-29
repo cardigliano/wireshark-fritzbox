@@ -1,22 +1,21 @@
 #!/bin/bash
 
 EXTCAP_VERSION="0.0.2"
-DEFAULT_FRITZ_IFACE="1-lan"
-WGET=/usr/local/bin/wget
-SID_FILE="/tmp/fritz.sid"
+WGET=/usr/bin/wget
+DEFAULT_FRITZ_IFACE="2-1"
 
 while [ "$1" != "" ]; do
     case $1 in
         --extcap-interfaces)
 			echo "extcap {version=$EXTCAP_VERSION}"
-			echo "interface {value=remote-fritzbox}{display=Remote FRITZ!Box Capture}"
+			echo "interface {value=fritzcap}{display=FRITZ!Box remote capture}"
             shift
             ;;
         --extcap-config)
-		    echo "arg {number=0}{call=--ifname}{display=Interface Name}{type=string}{tooltip=FRITZ!Box capture interface }{default=$DEFAULT_FRITZ_IFACE}"  
-			#echo "arg {number=0}{call=--ifname}{display=Capture Interface}{type=selector}"
-			#echo "value {arg=0}{call=1-lan}{display=LAN}"
-			#echo "value {arg=0}{call=2-1}{display=WAN}"
+			echo "arg {number=0}{call=--ifname}{display=Interface Name}{type=selector}{tooltip=FRITZ!Box capture interface }"
+			echo "value {arg=0}{value=2-1}{display=Internet}{default=true}"
+			echo "value {arg=0}{value=3-}{display=Routing Interface}{default=false}"
+			echo "value {arg=0}{value=1-lan}{display=LAN}{default=false}"
 			echo "arg {number=1}{call=--host}{display=FRITZ!Box IP address}{type=string}{tooltip=The FRITZ!Box IP address or hostname}{required=true}"
 			echo "arg {number=2}{call=--username}{display=FRITZ!Box user}{type=string}{tooltip=The FRITZ!Box username (usually not required)}"
 			echo "arg {number=3}{call=--password}{display=FRITZ!Box password}{type=password}{tooltip=The FRITZ!Box password}{required=true}"
@@ -67,31 +66,25 @@ if [ -z "$FRITZ_IFACE" ]; then
 	FRITZ_IFACE="$DEFAULT_FRITZ_IFACE"
 fi
 
-if [ ! -f $SID_FILE ]; then
-  touch $SID_FILE
-fi
+function get_session_id() {
+    local SID
+    CHALLENGE=$($WGET -O - "http://$FRITZ_IP/login_sid.lua" 2>/dev/null \
+        | sed 's/.*<Challenge>\(.*\)<\/Challenge>.*/\1/')
+    CPSTR="$CHALLENGE-$FRITZ_PWD"
+    MD5=$(echo -n $CPSTR | iconv -f ISO8859-1 -t UTF-16LE \
+        | md5sum -b | awk '{print substr($0,1,32)}')
+    RESPONSE="$CHALLENGE-$MD5"
+    SID=$($WGET -O - "http://$FRITZ_IP/login_sid.lua?username=$FRITZ_USER&response=$RESPONSE" 2>/dev/null \
+        | sed 's/.*<SID>\(.*\)<\/SID>.*/\1/')
 
-SID=$(cat $SID_FILE)
+    echo "$SID"
+}
 
-NOTCONNECTED=$(curl -s "http://$FRITZ_IP/login_sid.lua?sid=$SID" | grep -c "0000000000000000")
-if [ $NOTCONNECTED -gt 0 ]; then
-
-  CHALLENGE=$(curl -s http://$FRITZ_IP/login_sid.lua |  grep -o "<Challenge>[a-z0-9]\{8\}" | cut -d'>' -f 2)
-  HASH=$(perl -MPOSIX -e '
-    use Digest::MD5 "md5_hex";
-    my $ch_pw = "$ARGV[0]-$ARGV[1]";
-    $ch_pw =~ s/(.)/$1 . chr(0)/eg; 
-    my $md5 = lc(md5_hex($ch_pw)); 
-    print $md5;
-  ' -- "$CHALLENGE" "$FRITZ_PWD")
-  curl -s "http://$FRITZ_IP/login_sid.lua" -d "response=$CHALLENGE-$HASH" -d 'username='${FRITZ_USER} | grep -o "<SID>[a-z0-9]\{16\}" | cut -d'>' -f 2 > $SID_FILE
-fi
-
-SID=$(cat $SID_FILE)
+SID=$(get_session_id)
 
 if [ "$SID" == "0000000000000000" ]; then
-  echo "Authentication error" 1>&2
+  echo "Authentication failure!" 1>&2
   exit 1
 fi
 
-$WGET -qO- http://$FRITZ_IP/cgi-bin/capture_notimeout?ifaceorminor=$FRITZ_IFACE\&snaplen=\&capture=Start\&sid=$SID > $FIFO
+$WGET -qO- "http://$FRITZ_IP/cgi-bin/capture_notimeout?ifaceorminor=$FRITZ_IFACE&snaplen=1600&capture=Start&sid=$SID" > $FIFO
